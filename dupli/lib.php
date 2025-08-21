@@ -411,7 +411,7 @@ class plagiarism_plugin_dupli extends plagiarism_plugin
 
         // Get course module dupli settings.
         $modulesettings = $DB->get_records_menu(
-            plagiarism_dupli_config,
+            'plagiarism_dupli_config',
             ['cm' => $cmid],
             '',
             'name,value'
@@ -875,7 +875,7 @@ class plagiarism_plugin_dupli extends plagiarism_plugin
 
         // Check file is less than maximum allowed size.
         if ($submissiontype == 'file') {
-            if ($file->get_filesize() > PLAGIARISM_dupli_MAX_FILE_UPLOAD_SIZE) {
+            if ($file->get_filesize() > PLAGIARISM_DUPLI_MAX_FILE_UPLOAD_SIZE) {
                 $errorcode = 2;
             }
         }
@@ -1589,35 +1589,57 @@ function plagiarism_dupli_activitylog($string, $activity)
         $config = plagiarism_plugin_dupli::plagiarism_dupli_admin_config();
     }
 
-    if (isset($config->plagiarism_dupli_enable)) {
-        // We only keep 10 log files, delete any additional files.
-        $prefix = 'activitylog_';
+    // Check if logging is enabled in plugin configuration - exit early if disabled
+    if (empty($config->plagiarism_dupli_enable)) {
+        return;
+    }
 
-        $dirpath = $CFG->tempdir.'/plagiarism_dupli/logs';
-        if (!file_exists($dirpath)) {
-            mkdir($dirpath, 0777, true);
-        }
-        $dir = opendir($dirpath);
-        $files = [];
-        while ($entry = readdir($dir)) {
-            if (substr(basename($entry), 0, 1) != '.' and substr_count(basename($entry), $prefix) > 0) {
-                $files[] = basename($entry);
+    // Use make_temp_directory to create the log directory properly
+    $temppath = 'plagiarism_dupli/logs';
+    $dirpath = make_temp_directory($temppath);
+
+    // We only keep 10 log files, delete any additional files.
+    $prefix = 'activitylog_';
+
+    $files = [];
+    if ($handle = opendir($dirpath)) {
+        while ($entry = readdir($handle)) {
+            $filename = basename($entry);
+            if (substr($filename, 0, 1) != '.' && substr_count($filename, $prefix) > 0) {
+                $files[] = $filename;
             }
         }
-        sort($files);
-        for ($i = 0; $i < count($files) - 10; ++$i) {
-            unlink($dirpath.'/'.$files[$i]);
+        closedir($handle);
+    }
+
+    // Sort files chronologically (oldest first)
+    sort($files);
+
+    // Keep only the 10 most recent files
+    $filecount = count($files);
+    if ($filecount > 10) {
+        $filestodelete = $filecount - 10;
+        for ($i = 0; $i < $filestodelete; ++$i) {
+            $filetodelete = $dirpath.'/'.$files[$i];
+            if (file_exists($filetodelete) && is_file($filetodelete)) {
+                @unlink($filetodelete);
+            }
         }
+    }
 
-        // Replace <br> tags with new line character.
-        $string = str_replace('<br/>', "\r\n", $string);
+    // Replace <br> tags with new line character.
+    $string = str_replace('<br/>', "\r\n", $string);
 
-        // Write to log file.
-        $filepath = $dirpath.'/'.$prefix.gmdate('Y-m-d', time()).'.txt';
-        $file = fopen($filepath, 'a');
+    // Write to log file with proper error handling
+    $filepath = $dirpath.'/'.$prefix.gmdate('Y-m-d', time()).'.txt';
+
+    if ($file = @fopen($filepath, 'a')) {
         $output = date('Y-m-d H:i:s O').' ('.$activity.')'.' - '.$string."\r\n";
         fwrite($file, $output);
         fclose($file);
+    } elseif ($CFG->debug >= DEBUG_NORMAL) {
+        // Only log errors if debugging is enabled
+        error_log('plagiarism_dupli: Could not open log file: '.$filepath);
     }
 }
 /**
